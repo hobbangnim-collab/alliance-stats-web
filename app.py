@@ -12,6 +12,9 @@ import alliance_stats_report as report
 
 
 st.set_page_config(page_title="Alliance Stats", layout="wide")
+APP_DIR = Path(__file__).resolve().parent
+REPO_DATA_DIR = APP_DIR / "data"
+REPO_MEMBERS_FILE = APP_DIR / "members.txt"
 
 
 def check_password():
@@ -31,6 +34,17 @@ def save_uploads(uploaded_files, target_dir):
         path.write_bytes(uploaded.getbuffer())
 
 
+def copy_repo_csvs(target_dir):
+    if not REPO_DATA_DIR.exists():
+        return 0
+
+    count = 0
+    for source in REPO_DATA_DIR.glob("*.csv"):
+        (target_dir / source.name).write_bytes(source.read_bytes())
+        count += 1
+    return count
+
+
 def parse_member_text(text):
     members = set()
     for line in text.splitlines():
@@ -39,6 +53,12 @@ def parse_member_text(text):
             continue
         members.add(value)
     return members or None
+
+
+def load_repo_members():
+    if not REPO_MEMBERS_FILE.exists():
+        return None
+    return parse_member_text(REPO_MEMBERS_FILE.read_text(encoding="utf-8-sig"))
 
 
 def comparison_frame(comparison, source_column):
@@ -115,8 +135,9 @@ def main():
     use_all_members = st.toggle("전체 인원", value=False)
     top_n = st.slider("그래프 인원", 5, 100, 30)
 
-    if not uploaded_files:
-        st.info("CSV 파일을 업로드하세요.")
+    repo_csv_count = len(list(REPO_DATA_DIR.glob("*.csv"))) if REPO_DATA_DIR.exists() else 0
+    if not uploaded_files and repo_csv_count < 2:
+        st.info("CSV 파일을 업로드하거나 GitHub repo의 data 폴더에 CSV를 2개 이상 올리세요.")
         return
 
     members = None
@@ -125,13 +146,22 @@ def main():
             members = parse_member_text(member_file.getvalue().decode("utf-8-sig"))
         elif member_text.strip():
             members = parse_member_text(member_text)
+        else:
+            members = load_repo_members()
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        save_uploads(uploaded_files, temp_path)
+        if uploaded_files:
+            save_uploads(uploaded_files, temp_path)
+            source_caption = "업로드 CSV"
+        else:
+            copied = copy_repo_csvs(temp_path)
+            source_caption = f"GitHub data 폴더 CSV {copied}개"
+
         snapshots = report.load_snapshots(temp_path)
         comparison = report.build_comparison(snapshots[-2], snapshots[-1], members)
 
+        st.caption(source_caption)
         st.caption(f"{snapshots[-2]['path'].name} -> {snapshots[-1]['path'].name}")
 
         c1, c2, c3 = st.columns(3)
